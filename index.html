@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Confluencia">
+<meta name="theme-color" content="#0E1422">
+<title>Confluencia — Señales de trading</title>
+<style>
+:root{
+  --ink0:#0E1422;--ink1:#151D30;--ink2:#1E2940;
+  --t0:#EEF2FA;--t1:#9AA7C2;--t2:#5F6C89;
+  --buy:#3DDC97;--buy-dim:rgba(61,220,151,.13);
+  --sell:#FF6B6B;--sell-dim:rgba(255,107,107,.13);
+  --acc:#7AA2FF;--r:18px;
+  --ui:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--ink0);color:var(--t0);font-family:var(--ui);
+  -webkit-font-smoothing:antialiased;overscroll-behavior-y:none;min-height:100dvh}
+button{font-family:inherit;border:none;background:none;color:inherit;
+  cursor:pointer;-webkit-tap-highlight-color:transparent}
+input{font-family:inherit;-webkit-appearance:none;appearance:none}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* Layout */
+#app{max-width:520px;margin:0 auto;padding:0 16px calc(90px + env(safe-area-inset-bottom))}
+
+/* Header */
+.header{position:sticky;top:0;z-index:20;
+  padding:calc(10px + env(safe-area-inset-top)) 0 10px;
+  background:linear-gradient(var(--ink0) 80%,transparent);
+  display:flex;align-items:center;justify-content:space-between;gap:12px}
+.header h1{font-size:22px;font-weight:800;letter-spacing:-.02em}
+.header .sub{font-size:12px;color:var(--t1);margin-top:2px}
+.icon-btn{min-width:44px;min-height:44px;border-radius:14px;
+  background:var(--ink1);border:1px solid var(--ink2);
+  color:var(--t1);font-size:18px;display:grid;place-items:center}
+.icon-btn.on{color:#F5B942;border-color:rgba(245,185,66,.4)}
+
+/* Banner alerta */
+#banner{position:fixed;left:16px;right:16px;
+  top:calc(8px + env(safe-area-inset-top));z-index:50;
+  max-width:488px;margin:0 auto;padding:14px 16px;border-radius:16px;
+  display:none;align-items:center;gap:12px;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  box-shadow:0 12px 32px rgba(0,0,0,.45)}
+#banner.buy{background:rgba(20,60,45,.93);border:1px solid rgba(61,220,151,.5)}
+#banner.sell{background:rgba(70,25,28,.93);border:1px solid rgba(255,107,107,.5)}
+#banner.show{display:flex;animation:drop .35s cubic-bezier(.2,.9,.3,1.2)}
+#banner strong{font-size:15px}
+#banner p{font-size:13px;color:var(--t1);margin-top:2px;line-height:1.4}
+#banner .bclose{margin-left:auto;min-width:44px;min-height:44px;
+  color:var(--t1);font-size:17px;display:grid;place-items:center}
+@keyframes drop{from{transform:translateY(-24px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* Status */
+.status{display:flex;align-items:center;gap:8px;
+  font-size:12px;color:var(--t2);padding:4px 2px 12px}
+.pulse{width:7px;height:7px;border-radius:50%;background:var(--buy);
+  animation:pulse 2s ease-in-out infinite;flex-shrink:0}
+@keyframes pulse{50%{opacity:.25}}
+
+/* Skeleton */
+.sk{height:78px;border-radius:var(--r);margin-bottom:12px;
+  background:linear-gradient(100deg,var(--ink1) 40%,var(--ink2) 50%,var(--ink1) 60%);
+  background-size:200% 100%;animation:sh 1.4s infinite}
+@keyframes sh{to{background-position:-200% 0}}
+
+/* Card */
+.card{background:var(--ink1);border:1px solid var(--ink2);
+  border-radius:var(--r);margin-bottom:12px;overflow:hidden;
+  transition:border-color .25s}
+.card.buy-card{border-color:rgba(61,220,151,.55)}
+.card.sell-card{border-color:rgba(255,107,107,.55)}
+
+/* Card head */
+.card-head{width:100%;display:flex;align-items:center;gap:14px;
+  padding:14px;text-align:left;min-height:78px}
+.ticker{font-size:17px;font-weight:700;letter-spacing:.01em}
+.cname{font-size:12px;color:var(--t2);margin-top:2px;
+  max-width:170px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.conf-tag{display:inline-flex;align-items:center;gap:5px;
+  font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;margin-top:5px}
+.conf-tag.buy{background:var(--buy-dim);color:var(--buy)}
+.conf-tag.sell{background:var(--sell-dim);color:var(--sell)}
+.price-blk{margin-left:auto;text-align:right}
+.price{font-size:17px;font-weight:600}
+.delta{font-size:13px;margin-top:2px}
+.delta.up{color:var(--buy)}.delta.dn{color:var(--sell)}
+
+/* Ring */
+.ring{flex-shrink:0;position:relative;width:52px;height:52px}
+.ring svg{transform:rotate(-90deg);display:block}
+.rcount{position:absolute;inset:0;display:grid;place-items:center;
+  font-size:14px;font-weight:700}
+.rcount.buy{color:var(--buy)}.rcount.sell{color:var(--sell)}.rcount.none{color:var(--t2)}
+
+/* Strategies */
+.strategies{border-top:1px solid var(--ink2);padding:6px 14px 10px;display:none}
+.card.open .strategies{display:block}
+.srow{display:flex;align-items:flex-start;gap:12px;padding:12px 0;min-height:44px}
+.srow+.srow{border-top:1px solid rgba(255,255,255,.05)}
+.dot{width:10px;height:10px;border-radius:50%;margin-top:5px;flex-shrink:0}
+.dot.BUY{background:var(--buy);box-shadow:0 0 8px rgba(61,220,151,.6)}
+.dot.SELL{background:var(--sell);box-shadow:0 0 8px rgba(255,107,107,.6)}
+.dot.NEUTRAL{background:var(--t2)}
+.sname{font-size:14px;font-weight:600}
+.sdetail{font-size:13px;color:var(--t1);margin-top:2px;line-height:1.4}
+.ssig{margin-left:auto;font-size:12px;font-weight:700;flex-shrink:0;padding-left:8px}
+.ssig.BUY{color:var(--buy)}.ssig.SELL{color:var(--sell)}.ssig.NEUTRAL{color:var(--t2)}
+.rm-btn{width:100%;min-height:44px;font-size:13px;
+  color:var(--sell);border-top:1px solid var(--ink2)}
+
+/* Errores inline */
+.err-line{background:var(--sell-dim);border:1px solid rgba(255,107,107,.3);
+  color:var(--sell);border-radius:14px;padding:12px 14px;
+  font-size:13px;margin-bottom:12px}
+
+/* Add bar */
+.add-bar{position:fixed;left:0;right:0;bottom:0;z-index:30;
+  padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  background:linear-gradient(transparent,var(--ink0) 35%)}
+.add-bar .inner{max-width:488px;margin:0 auto;display:flex;gap:8px}
+.add-bar input{flex:1;min-height:50px;border-radius:16px;
+  border:1px solid var(--ink2);background:var(--ink1);
+  color:var(--t0);padding:0 16px;font-size:16px;text-transform:uppercase}
+.add-bar input::placeholder{color:var(--t2);text-transform:none}
+.add-bar .add-btn{min-width:64px;min-height:50px;border-radius:16px;
+  background:var(--acc);color:#0B1120;font-weight:700;font-size:15px}
+.add-bar .add-btn:disabled{opacity:.45}
+
+/* Disclaimer */
+.disc{font-size:11px;color:var(--t2);text-align:center;
+  line-height:1.5;padding:16px 8px 0}
+
+/* Empty */
+.empty{text-align:center;padding:48px 24px;color:var(--t1);
+  font-size:14px;line-height:1.6}
+
+@media(prefers-reduced-motion:reduce){
+  .pulse,.sk,#banner{animation:none}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Banner de alerta -->
+  <div id="banner" role="alert">
+    <div id="banner-body">
+      <strong id="banner-title"></strong>
+      <p id="banner-text"></p>
+    </div>
+    <button class="bclose" onclick="closeBanner()" aria-label="Cerrar">✕</button>
+  </div>
+
+  <!-- Header -->
+  <header class="header">
+    <div>
+      <h1>Confluencia</h1>
+      <div class="sub" id="sub-txt">5 estrategias vigilando tu lista</div>
+    </div>
+    <button class="icon-btn" id="notif-btn" onclick="toggleNotif()" aria-label="Notificaciones">🔕</button>
+  </header>
+
+  <!-- Estado -->
+  <div class="status">
+    <span class="pulse" aria-hidden="true"></span>
+    <span id="status-txt">Conectando con el mercado…</span>
+  </div>
+
+  <!-- Contenido dinámico -->
+  <div id="errors-zone"></div>
+  <div id="cards-zone">
+    <div class="sk"></div><div class="sk"></div><div class="sk"></div>
+  </div>
+
+  <p class="disc">Herramienta informativa con fines educativos. Las señales técnicas no garantizan resultados y no constituyen asesoría financiera.</p>
+
+  <!-- Barra añadir símbolo -->
+  <div class="add-bar">
+    <div class="inner">
+      <input id="sym-input" placeholder="Añadir símbolo (AAPL, BTC-USD…)"
+        inputmode="text" autocapitalize="characters" autocorrect="off"
+        enterkeyhint="done" aria-label="Símbolo a añadir"
+        oninput="onInputChange()" onkeydown="if(event.key==='Enter')addSymbol()">
+      <button class="add-btn" id="add-btn" onclick="addSymbol()" disabled>Añadir</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+   CONFLUENCIA — Trading Signals App
+   Stack: HTML/CSS/JS puro. Sin dependencias. Sin build step.
+   Datos: Yahoo Finance public chart API vía CORS proxy.
+   ===================================================================== */
+
+// ── Configuración ──────────────────────────────────────────────────────
+const POLL_MS      = 60_000;
+const STORAGE_KEY  = 'confluencia.wl.v2';
+const RECENT_BARS  = 3;
+const SYM_RE       = /^[A-Za-z0-9.\-\^=]{1,12}$/;
+const CORS_PROXY   = 'https://corsproxy.io/?';
+const DEFAULT_WL   = ['AAPL','MSFT','NVDA','TSLA','SPY'];
+
+// ── Estado global ──────────────────────────────────────────────────────
+let watchlist  = [];
+let prevConfl  = {};          // símbolo → última acción de confluencia
+let notifOn    = false;
+let pollTimer  = null;
+let lastUpdate = null;
+
+// ── Persistencia ───────────────────────────────────────────────────────
+function loadWatchlist() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (Array.isArray(p) && p.length) return p;
+    }
+  } catch(_) {}
+  return [...DEFAULT_WL];
+}
+function saveWatchlist() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(watchlist)); } catch(_) {}
+}
+
+// ── Indicadores técnicos ───────────────────────────────────────────────
+function sma(v, p) {
+  const out = new Array(v.length).fill(null);
+  let s = 0;
+  for (let i = 0; i < v.length; i++) {
+    s += v[i];
+    if (i >= p) s -= v[i-p];
+    if (i >= p-1) out[i] = s/p;
+  }
+  return out;
+}
+function ema(v, p) {
+  const out = new Array(v.length).fill(null);
+  if (v.length < p) return out;
+  const k = 2/(p+1);
+  let prev = v.slice(0,p).reduce((a,b)=>a+b,0)/p;
+  out[p-1] = prev;
+  for (let i = p; i < v.length; i++) { prev = v[i]*k + prev*(1-k); out[i] = prev; }
+  return out;
+}
+function rsiArr(v, p=14) {
+  const out = new Array(v.length).fill(null);
+  if (v.length <= p) return out;
+  let ag=0, al=0;
+  for (let i=1; i<=p; i++) { const c=v[i]-v[i-1]; ag+=Math.max(c,0); al+=Math.max(-c,0); }
+  ag/=p; al/=p;
+  out[p] = al===0 ? 100 : 100 - 100/(1+ag/al);
+  for (let i=p+1; i<v.length; i++) {
+    const c=v[i]-v[i-1];
+    ag = (ag*(p-1)+Math.max(c,0))/p;
+    al = (al*(p-1)+Math.max(-c,0))/p;
+    out[i] = al===0 ? 100 : 100-100/(1+ag/al);
+  }
+  return out;
+}
+function macdArr(v, fast=12, slow=26, sig=9) {
+  const ef=ema(v,fast), es=ema(v,slow);
+  const line = v.map((_,i)=> ef[i]!=null&&es[i]!=null ? ef[i]-es[i] : null);
+  const start = line.findIndex(x=>x!==null);
+  const signal = new Array(v.length).fill(null);
+  const hist   = new Array(v.length).fill(null);
+  if (start===-1) return {line,signal,hist};
+  const seg = line.slice(start).map(x=>x??0);
+  const ss  = ema(seg, sig);
+  ss.forEach((s,i)=>{ if(s!=null){ signal[start+i]=s; hist[start+i]=line[start+i]-s; } });
+  return {line,signal,hist};
+}
+function rollingStd(v, p) {
+  const out = new Array(v.length).fill(null);
+  for (let i=p-1; i<v.length; i++) {
+    const w=v.slice(i-p+1,i+1), m=w.reduce((a,b)=>a+b,0)/p;
+    out[i]=Math.sqrt(w.reduce((a,b)=>a+(b-m)**2,0)/(p-1));
+  }
+  return out;
+}
+function bollinger(v, p=20, mult=2) {
+  const mid=sma(v,p), std=rollingStd(v,p);
+  return {
+    mid, std,
+    upper: v.map((_,i)=>mid[i]!=null&&std[i]!=null ? mid[i]+mult*std[i] : null),
+    lower: v.map((_,i)=>mid[i]!=null&&std[i]!=null ? mid[i]-mult*std[i] : null),
+  };
+}
+
+// ── Estrategias ────────────────────────────────────────────────────────
+function recentIdx(n, bars, cond) {
+  for (let i=n-1; i>=Math.max(1,n-bars); i--) if(cond(i)) return i;
+  return null;
+}
+
+function stratSmaCross(closes) {
+  const fast=sma(closes,20), slow=sma(closes,50), n=closes.length;
+  const up = recentIdx(n,RECENT_BARS,i=>fast[i]!=null&&slow[i]!=null&&fast[i-1]!=null&&slow[i-1]!=null
+    ? fast[i]>slow[i]&&fast[i-1]<=slow[i-1] : false);
+  const dn = recentIdx(n,RECENT_BARS,i=>fast[i]!=null&&slow[i]!=null&&fast[i-1]!=null&&slow[i-1]!=null
+    ? fast[i]<slow[i]&&fast[i-1]>=slow[i-1] : false);
+  const spread = fast[n-1]!=null&&slow[n-1]!=null ? (fast[n-1]-slow[n-1])/slow[n-1] : 0;
+  if (up!==null) return {id:'sma',name:'Cruce medias 20/50',signal:'BUY',
+    confidence:Math.min(1,.6+Math.abs(spread)*20),
+    detail:'La media de 20 días cruzó por encima de la de 50 — cruce dorado.'};
+  if (dn!==null) return {id:'sma',name:'Cruce medias 20/50',signal:'SELL',
+    confidence:Math.min(1,.6+Math.abs(spread)*20),
+    detail:'La media de 20 días cruzó por debajo de la de 50 — cruce de la muerte.'};
+  return {id:'sma',name:'Cruce medias 20/50',signal:'NEUTRAL',confidence:0,
+    detail:spread>0?'Sin cruce reciente. Tendencia de fondo alcista.':'Sin cruce reciente. Tendencia de fondo bajista.'};
+}
+
+function stratRsi(closes) {
+  const vals=rsiArr(closes,14), n=vals.length;
+  const cur=vals[n-1], prev=vals[n-2];
+  if(cur==null||prev==null) return {id:'rsi',name:'RSI 14',signal:'NEUTRAL',confidence:0,detail:'Datos insuficientes.'};
+  if(cur<35&&cur>prev) return {id:'rsi',name:'RSI 14',signal:'BUY',
+    confidence:Math.min(1,(35-Math.min(cur,35))/15+.5),
+    detail:`RSI en ${cur.toFixed(1)} — sobreventa y girando al alza.`};
+  if(cur>65&&cur<prev) return {id:'rsi',name:'RSI 14',signal:'SELL',
+    confidence:Math.min(1,(Math.max(cur,65)-65)/15+.5),
+    detail:`RSI en ${cur.toFixed(1)} — sobrecompra y girando a la baja.`};
+  const zone = cur>=65?'sobrecompra, sin giro aún':cur<=35?'sobreventa, sin giro aún':'zona neutral (35–65)';
+  return {id:'rsi',name:'RSI 14',signal:'NEUTRAL',confidence:0,
+    detail:`RSI en ${cur.toFixed(1)} — ${zone}.`};
+}
+
+function stratMacd(closes) {
+  const {hist} = macdArr(closes), n=hist.length;
+  const up = recentIdx(n,RECENT_BARS,i=>hist[i]!=null&&hist[i-1]!=null?hist[i]>0&&hist[i-1]<=0:false);
+  const dn = recentIdx(n,RECENT_BARS,i=>hist[i]!=null&&hist[i-1]!=null?hist[i]<0&&hist[i-1]>=0:false);
+  const h=hist[n-1];
+  if(up!==null) return {id:'macd',name:'MACD 12/26/9',signal:'BUY',confidence:.7,
+    detail:'El histograma MACD acaba de cruzar a positivo — impulso alcista.'};
+  if(dn!==null) return {id:'macd',name:'MACD 12/26/9',signal:'SELL',confidence:.7,
+    detail:'El histograma MACD acaba de cruzar a negativo — impulso bajista.'};
+  return {id:'macd',name:'MACD 12/26/9',signal:'NEUTRAL',confidence:0,
+    detail:h!=null&&h>0?'Sin cruce reciente. Histograma positivo (alcista vigente).':'Sin cruce reciente. Histograma negativo (bajista vigente).'};
+}
+
+function stratBollinger(closes, highs, lows) {
+  const {upper,lower}=bollinger(closes,20,2), n=closes.length;
+  const up=recentIdx(n,RECENT_BARS,i=>lower[i]!=null&&lower[i-1]!=null
+    ? lows[i-1]<=lower[i-1]&&closes[i]>lower[i] : false);
+  const dn=recentIdx(n,RECENT_BARS,i=>upper[i]!=null&&upper[i-1]!=null
+    ? highs[i-1]>=upper[i-1]&&closes[i]<upper[i] : false);
+  if(up!==null) return {id:'boll',name:'Bollinger 20/2σ',signal:'BUY',confidence:.65,
+    detail:'Tocó la banda inferior y volvió a cerrar dentro — rebote alcista.'};
+  if(dn!==null) return {id:'boll',name:'Bollinger 20/2σ',signal:'SELL',confidence:.65,
+    detail:'Tocó la banda superior y volvió a cerrar dentro — rechazo bajista.'};
+  return {id:'boll',name:'Bollinger 20/2σ',signal:'NEUTRAL',confidence:0,
+    detail:'Precio dentro de las bandas, sin contacto reciente con los extremos.'};
+}
+
+function stratZScore(closes) {
+  const mid=sma(closes,20), std=rollingStd(closes,20), n=closes.length;
+  const z=i=>mid[i]!=null&&std[i]!=null&&std[i]>0?(closes[i]-mid[i])/std[i]:null;
+  const up=recentIdx(n,RECENT_BARS,i=>{const a=z(i-1),b=z(i);return a!=null&&b!=null&&a<=-2&&b>-2;});
+  const dn=recentIdx(n,RECENT_BARS,i=>{const a=z(i-1),b=z(i);return a!=null&&b!=null&&a>=2&&b<2;});
+  const zn=z(n-1);
+  if(up!==null) return {id:'z',name:'Z-score (reversión)',signal:'BUY',confidence:.6,
+    detail:'El precio salió de z < −2σ — reversión estadística al alza.'};
+  if(dn!==null) return {id:'z',name:'Z-score (reversión)',signal:'SELL',confidence:.6,
+    detail:'El precio salió de z > +2σ — reversión estadística a la baja.'};
+  return {id:'z',name:'Z-score (reversión)',signal:'NEUTRAL',confidence:0,
+    detail:zn!=null?`Desviación actual: ${zn.toFixed(2)}σ de la media de 20 días.`:'Datos insuficientes.'};
+}
+
+function evaluate({closes,highs,lows}) {
+  return [
+    stratSmaCross(closes),
+    stratRsi(closes),
+    stratMacd(closes),
+    stratBollinger(closes,highs,lows),
+    stratZScore(closes),
+  ];
+}
+
+function confluence(signals, threshold=2) {
+  const buys  = signals.filter(s=>s.signal==='BUY');
+  const sells = signals.filter(s=>s.signal==='SELL');
+  const total = signals.length;
+  if(buys.length>=threshold&&buys.length>sells.length)
+    return {action:'BUY',count:buys.length,total,strategies:buys.map(s=>s.name)};
+  if(sells.length>=threshold&&sells.length>buys.length)
+    return {action:'SELL',count:sells.length,total,strategies:sells.map(s=>s.name)};
+  return {action:'NONE',count:Math.max(buys.length,sells.length),total,strategies:[]};
+}
+
+// ── Datos de mercado (Yahoo Finance vía CORS proxy) ────────────────────
+async function fetchSeries(symbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=6mo`;
+  const res = await fetch(CORS_PROXY + encodeURIComponent(url), {cache:'no-store'});
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.chart?.error) throw new Error(json.chart.error.description || 'Símbolo no encontrado');
+  const result = json.chart?.result?.[0];
+  if (!result?.timestamp) throw new Error('Sin datos para ' + symbol);
+  const rawC = result.indicators.quote[0].close  || [];
+  const rawH = result.indicators.quote[0].high   || [];
+  const rawL = result.indicators.quote[0].low    || [];
+  const ts=[],closes=[],highs=[],lows=[];
+  result.timestamp.forEach((t,i)=>{
+    const c=rawC[i];
+    if(c!=null&&isFinite(c)){ ts.push(t);closes.push(c);highs.push(rawH[i]??c);lows.push(rawL[i]??c); }
+  });
+  if(closes.length<60) throw new Error(`Historial insuficiente para ${symbol}`);
+  const price = result.meta.regularMarketPrice ?? closes[closes.length-1];
+  const prevClose = result.meta.chartPreviousClose ?? result.meta.previousClose ?? closes[closes.length-2];
+  return {
+    symbol, price, prevClose,
+    name: result.meta.longName ?? result.meta.shortName ?? null,
+    currency: result.meta.currency ?? null,
+    asOf: new Date(ts[ts.length-1]*1000).toISOString(),
+    closes, highs, lows,
+  };
+}
+
+// ── Renderizado ────────────────────────────────────────────────────────
+function ringSVG(conf) {
+  const total=conf.total, size=52, r=22, cx=26, gap=14, seg=360/total-gap;
+  const litColor = conf.action==='BUY'?'var(--buy)':conf.action==='SELL'?'var(--sell)':null;
+  let paths='';
+  for(let i=0;i<total;i++){
+    const a0=i*(seg+gap), a1=a0+seg;
+    const toXY=deg=>{const rad=deg*Math.PI/180;return [cx+r*Math.cos(rad),cx+r*Math.sin(rad)];};
+    const [x1,y1]=toXY(a0),[x2,y2]=toXY(a1);
+    const lit = litColor!==null && i<conf.count;
+    const color = lit?litColor:'var(--ink2)';
+    paths+=`<path d="M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)}" fill="none" stroke="${color}" stroke-width="4" stroke-linecap="round"/>`;
+  }
+  const cc = conf.action==='BUY'?'buy':conf.action==='SELL'?'sell':'none';
+  return `<div class="ring" aria-label="${conf.count} de ${conf.total} estrategias alineadas">
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="transform:rotate(-90deg)">${paths}</svg>
+    <span class="rcount ${cc} mono">${conf.count}/${conf.total}</span>
+  </div>`;
+}
+
+function cardHTML(data) {
+  const {symbol,name,price,prevClose,currency,conf,strategies} = data;
+  const pct = prevClose>0 ? (price-prevClose)/prevClose*100 : 0;
+  const up  = pct>=0;
+  const cardCls = conf.action==='BUY'?'buy-card':conf.action==='SELL'?'sell-card':'';
+  const tagHTML = conf.action!=='NONE'
+    ? `<span class="conf-tag ${conf.action==='BUY'?'buy':'sell'}">${conf.action==='BUY'?'▲ Entrada de compra':'▼ Señal de venta'} · ${conf.count} estrategias</span>`
+    : '';
+  const rows = strategies.map(s=>`
+    <div class="srow">
+      <span class="dot ${s.signal}" aria-hidden="true"></span>
+      <div><div class="sname">${s.name}</div><div class="sdetail">${s.detail}</div></div>
+      <span class="ssig ${s.signal}">${s.signal==='BUY'?'COMPRA':s.signal==='SELL'?'VENTA':'—'}</span>
+    </div>`).join('');
+  const cur = currency?` ${currency}`:'';
+  return `
+  <article class="card ${cardCls}" id="card-${symbol}">
+    <button class="card-head" onclick="toggleCard('${symbol}')" aria-expanded="false">
+      ${ringSVG(conf)}
+      <div>
+        <div class="ticker">${symbol}</div>
+        ${name?`<div class="cname">${name}</div>`:''}
+        ${tagHTML}
+      </div>
+      <div class="price-blk">
+        <div class="price mono">${price.toLocaleString('es',{maximumFractionDigits:2})}${cur}</div>
+        <div class="delta mono ${up?'up':'dn'}">${up?'+':''}${pct.toFixed(2)}%</div>
+      </div>
+    </button>
+    <div class="strategies">
+      ${rows}
+      <button class="rm-btn" onclick="removeSymbol('${symbol}')">Quitar ${symbol} de la lista</button>
+    </div>
+  </article>`;
+}
+
+function toggleCard(symbol) {
+  const card = document.getElementById('card-'+symbol);
+  if (!card) return;
+  const open = card.classList.toggle('open');
+  card.querySelector('.card-head').setAttribute('aria-expanded', open);
+}
+
+// ── Alertas y notificaciones ───────────────────────────────────────────
+function showBanner(data) {
+  const {symbol,conf} = data;
+  const isBuy = conf.action==='BUY';
+  const verb = isBuy?'Punto de entrada':'Señal de venta';
+  const banner = document.getElementById('banner');
+  banner.className = isBuy?'show buy':'show sell';
+  document.getElementById('banner-title').textContent = `${isBuy?'▲':'▼'} ${symbol}: ${verb}`;
+  document.getElementById('banner-text').textContent =
+    `${conf.count}/${conf.total} estrategias coinciden: ${conf.strategies.join(', ')}.`;
+  if ('vibrate' in navigator) navigator.vibrate([80,40,80]);
+  if (notifOn && 'Notification' in window && Notification.permission==='granted') {
+    new Notification(`${verb} en ${symbol}`, {
+      body:`${conf.count}/${conf.total} estrategias: ${conf.strategies.join(', ')}.`
+    });
+  }
+}
+function closeBanner() {
+  document.getElementById('banner').className='';
+}
+
+// ── Polling y renderizado central ──────────────────────────────────────
+async function refresh() {
+  if (!watchlist.length) {
+    document.getElementById('cards-zone').innerHTML =
+      '<div class="empty">Tu lista está vacía. Añade un símbolo abajo — por ejemplo AAPL, ^GSPC o BTC-USD.</div>';
+    return;
+  }
+  const results = await Promise.allSettled(watchlist.map(async sym=>{
+    const series = await fetchSeries(sym);
+    const strategies = evaluate(series);
+    const conf = confluence(strategies);
+    return {...series, strategies, conf};
+  }));
+
+  const zone  = document.getElementById('cards-zone');
+  const errz  = document.getElementById('errors-zone');
+  errz.innerHTML='';
+  let html='', alerts=0;
+
+  results.forEach((res,i)=>{
+    const sym = watchlist[i];
+    if (res.status==='fulfilled') {
+      const data = res.value;
+      html += cardHTML(data);
+      if(data.conf.action!=='NONE') {
+        alerts++;
+        const prev = prevConfluence[sym]??'NONE';
+        if(data.conf.action!==prev) showBanner(data);
+        prevConfluence[sym] = data.conf.action;
+      } else {
+        prevConfluence[sym]='NONE';
+      }
+    } else {
+      const msg = res.reason?.message ?? 'Error desconocido';
+      errz.innerHTML += `<div class="err-line">⚠ ${sym}: ${msg}</div>`;
+    }
+  });
+
+  zone.innerHTML = html||'';
+  lastUpdate = new Date();
+  document.getElementById('status-txt').textContent =
+    `Actualizado ${lastUpdate.toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})} · refresca cada minuto`;
+  document.getElementById('sub-txt').textContent =
+    alerts>0?`${alerts} ${alerts===1?'alerta activa':'alertas activas'}`:'5 estrategias vigilando tu lista';
+}
+
+function startPolling() {
+  if(pollTimer) clearInterval(pollTimer);
+  refresh();
+  pollTimer = setInterval(refresh, POLL_MS);
+}
+
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='visible') refresh();
+});
+
+// ── Watchlist ──────────────────────────────────────────────────────────
+function addSymbol() {
+  const inp = document.getElementById('sym-input');
+  const sym = inp.value.trim().toUpperCase();
+  if (!SYM_RE.test(sym)) return;
+  if (watchlist.includes(sym)) { inp.value=''; onInputChange(); return; }
+  if (watchlist.length>=10) {
+    document.getElementById('errors-zone').innerHTML =
+      '<div class="err-line">Máximo 10 símbolos. Quita uno para añadir otro.</div>';
+    return;
+  }
+  watchlist.push(sym);
+  saveWatchlist();
+  inp.value='';
+  onInputChange();
+  startPolling();
+}
+
+function removeSymbol(sym) {
+  watchlist = watchlist.filter(s=>s!==sym);
+  delete prevConfluence[sym];
+  saveWatchlist();
+  startPolling();
+}
+
+function onInputChange() {
+  const val = document.getElementById('sym-input').value.trim();
+  document.getElementById('add-btn').disabled = !SYM_RE.test(val);
+}
+
+// ── Notificaciones ─────────────────────────────────────────────────────
+async function toggleNotif() {
+  if (!('Notification' in window)) {
+    alert('Para notificaciones en iPhone: abre la app desde Safari, toca Compartir → Añadir a pantalla de inicio. Luego ábrela desde el icono.');
+    return;
+  }
+  if (Notification.permission==='granted') {
+    notifOn = !notifOn;
+  } else {
+    const perm = await Notification.requestPermission();
+    notifOn = perm==='granted';
+  }
+  const btn = document.getElementById('notif-btn');
+  btn.textContent = notifOn?'🔔':'🔕';
+  btn.className = notifOn?'icon-btn on':'icon-btn';
+}
+
+// ── Arranque ───────────────────────────────────────────────────────────
+watchlist = loadWatchlist();
+startPolling();
+</script>
+</body>
+</html>
