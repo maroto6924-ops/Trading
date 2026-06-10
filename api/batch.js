@@ -1,3 +1,10 @@
+/**
+ * SobriTrading · /api/batch.js  v5 — Twelve Data (multi-símbolo)
+ *
+ * Usa el endpoint time_series de Twelve Data con MÚLTIPLES símbolos por
+ * llamada (hasta 8 en plan gratuito), respetando el límite de 8 req/min.
+ * Respaldo: Yahoo Finance con crumb si Twelve Data agota cuota diaria.
+ */
 
 
 const TWELVE_DATA_KEY = 'e95cfcd552ac41a3ac30d19620357dd0';
