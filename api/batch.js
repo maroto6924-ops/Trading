@@ -1,9 +1,9 @@
 
+
+const TWELVE_DATA_KEY = 'e95cfcd552ac41a3ac30d19620357dd0';
+
 const SYMBOL_RE = /^[A-Za-z0-9.\-^=]{1,12}$/;
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-
-let _crumb = null, _cookie = null, _crumbAt = 0;
-const CRUMB_TTL = 40 * 60 * 1000;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function fetchT(url, ms, opts) {
@@ -13,115 +13,91 @@ async function fetchT(url, ms, opts) {
   finally { clearTimeout(tid); }
 }
 
-/* ── Crumb + cookies de Yahoo (cacheado en módulo) ── */
-async function getCrumb() {
-  if (_crumb && (Date.now() - _crumbAt) < CRUMB_TTL) return { crumb: _crumb, cookie: _cookie };
-  try {
-    const r1 = await fetchT('https://fc.yahoo.com/', 6000, {
-      redirect: 'follow',
-      headers: { 'User-Agent': UA, 'Accept': 'text/html,*/*' }
-    }).catch(() => null);
+/* ── Mapeo símbolo → formato Twelve Data ── */
+function tdSymbol(sym) {
+  const map = {
+    'BTC-USD':'BTC/USD','ETH-USD':'ETH/USD','SOL-USD':'SOL/USD','XRP-USD':'XRP/USD',
+    '^GSPC':'SPX','^NDX':'NDX','^DJI':'DJI'
+  };
+  return map[sym.toUpperCase()] || sym.toUpperCase();
+}
+/* Mapa inverso para reconstruir resultados */
+function fromTdSymbol(tdSym, original) { return original; }
 
-    let cookie = '';
-    if (r1) {
-      const raw = r1.headers.getSetCookie ? r1.headers.getSetCookie()
-        : (r1.headers.get('set-cookie') || '').split(',').filter(s => s.trim());
-      cookie = raw.map(c => c.split(';')[0].trim()).filter(Boolean).join('; ');
+/* ── Convertir una serie de Twelve Data al formato chart de Yahoo ── */
+function tdToChart(values, meta, symbol) {
+  if (!values || !Array.isArray(values) || values.length < 35) return null;
+  const rows = values.slice().reverse(); // TD da más reciente primero
+  const ts = [], close = [], high = [], low = [], volume = [];
+  for (const row of rows) {
+    const c = parseFloat(row.close), h = parseFloat(row.high), l = parseFloat(row.low);
+    const v = parseFloat(row.volume || '0');
+    const t = Date.parse(row.datetime + 'T16:00:00Z') / 1000;
+    if (isFinite(t) && isFinite(c)) {
+      ts.push(t); close.push(c);
+      high.push(isFinite(h) ? h : c); low.push(isFinite(l) ? l : c); volume.push(isFinite(v) ? v : 0);
     }
-
-    // Fallback de cookies vía finance.yahoo.com si fc.yahoo.com no dio
-    if (!cookie) {
-      const r1b = await fetchT('https://finance.yahoo.com/', 6000, {
-        redirect: 'follow', headers: { 'User-Agent': UA, 'Accept': 'text/html,*/*' }
-      }).catch(() => null);
-      if (r1b) {
-        const raw = r1b.headers.getSetCookie ? r1b.headers.getSetCookie()
-          : (r1b.headers.get('set-cookie') || '').split(',').filter(s => s.trim());
-        cookie = raw.map(c => c.split(';')[0].trim()).filter(Boolean).join('; ');
-      }
-    }
-
-    const r2 = await fetchT('https://query2.finance.yahoo.com/v1/test/getcrumb', 6000, {
-      headers: { 'User-Agent': UA, 'Cookie': cookie, 'Accept': '*/*', 'Referer': 'https://finance.yahoo.com/' }
-    });
-    if (r2.ok) {
-      const crumb = (await r2.text()).trim();
-      if (crumb && crumb.length > 0 && !crumb.includes('<') && crumb !== 'Unauthorized') {
-        _crumb = crumb; _cookie = cookie; _crumbAt = Date.now();
-        return { crumb, cookie };
-      }
-    }
-  } catch (_) {}
-  return null;
+  }
+  if (close.length < 35) return null;
+  const cur = (meta && meta.currency) || 'USD';
+  return { chart: { result: [{ meta:{ regularMarketPrice:close[close.length-1], chartPreviousClose:close[close.length-2], currency:cur, shortName:symbol }, timestamp:ts, indicators:{ quote:[{close,high,low,volume}] } }], error:null } };
 }
 
-/* ── Fuente 1+2: Yahoo Finance ── */
+/* ── Twelve Data: pedir hasta 8 símbolos en UNA llamada ── */
+async function fetchTwelveBatch(symbols) {
+  if (!TWELVE_DATA_KEY || TWELVE_DATA_KEY === 'TU_CLAVE_AQUI') throw new Error('sin-clave');
+  const tdSyms = symbols.map(tdSymbol);
+  const url = 'https://api.twelvedata.com/time_series?symbol=' + encodeURIComponent(tdSyms.join(',')) +
+              '&interval=1day&outputsize=90&apikey=' + TWELVE_DATA_KEY;
+  const r = await fetchT(url, 12000, { headers: { 'User-Agent': UA } });
+  if (!r.ok) throw new Error('TD-http-' + r.status);
+  const j = await r.json();
+
+  const out = {};
+  if (symbols.length === 1) {
+    // Respuesta de símbolo único: {meta, values, status}
+    if (j.status === 'error') throw new Error(j.message || 'TD-error');
+    const chart = tdToChart(j.values, j.meta, symbols[0]);
+    if (chart) out[symbols[0]] = chart;
+  } else {
+    // Respuesta multi-símbolo: {"AAPL":{...}, "MSFT":{...}}
+    for (let i = 0; i < symbols.length; i++) {
+      const td = tdSyms[i], orig = symbols[i];
+      const entry = j[td];
+      if (entry && entry.status !== 'error' && entry.values) {
+        const chart = tdToChart(entry.values, entry.meta, orig);
+        if (chart) out[orig] = chart;
+      }
+    }
+  }
+  return { out, raw: j };
+}
+
+/* ── Respaldo Yahoo ── */
+let _crumb = null, _cookie = null, _crumbAt = 0;
+const CRUMB_TTL = 40 * 60 * 1000;
+async function getCrumb() {
+  if (_crumb && (Date.now() - _crumbAt) < CRUMB_TTL) return { crumb: _crumb, cookie: _cookie };
+  for (const seed of ['https://fc.yahoo.com/', 'https://finance.yahoo.com/']) {
+    try {
+      const r1 = await fetchT(seed, 6000, { redirect: 'follow', headers: { 'User-Agent': UA, 'Accept': 'text/html,*/*' } });
+      const raw = r1.headers.getSetCookie ? r1.headers.getSetCookie() : (r1.headers.get('set-cookie') || '').split(',').filter(s => s.trim());
+      const cookie = raw.map(c => c.split(';')[0].trim()).filter(Boolean).join('; ');
+      if (!cookie) continue;
+      const r2 = await fetchT('https://query2.finance.yahoo.com/v1/test/getcrumb', 6000, { headers: { 'User-Agent': UA, 'Cookie': cookie, 'Accept': '*/*', 'Referer': 'https://finance.yahoo.com/' } });
+      if (r2.ok) { const crumb = (await r2.text()).trim(); if (crumb && !crumb.includes('<') && crumb !== 'Unauthorized') { _crumb = crumb; _cookie = cookie; _crumbAt = Date.now(); return { crumb, cookie }; } }
+    } catch (_) {}
+  }
+  return null;
+}
 async function fromYahoo(symbol, cd) {
   const qs = '?interval=1d&range=3mo' + (cd ? ('&crumb=' + encodeURIComponent(cd.crumb)) : '');
   const path = '/v8/finance/chart/' + encodeURIComponent(symbol) + qs;
-  const headers = Object.assign(
-    { 'User-Agent': UA, 'Accept': 'application/json,*/*', 'Referer': 'https://finance.yahoo.com/' },
-    cd ? { 'Cookie': cd.cookie } : {}
-  );
+  const headers = Object.assign({ 'User-Agent': UA, 'Accept': 'application/json,*/*', 'Referer': 'https://finance.yahoo.com/' }, cd ? { 'Cookie': cd.cookie } : {});
   for (const host of ['https://query1.finance.yahoo.com', 'https://query2.finance.yahoo.com']) {
-    try {
-      const r = await fetchT(host + path, 7000, { headers });
-      if (r.status === 429) { const e = new Error('429'); e.is429 = true; throw e; }
-      if (!r.ok) continue;
-      const j = await r.json();
-      if (j?.chart?.result) return j;
-    } catch (e) { if (e.is429) throw e; }
+    try { const r = await fetchT(host + path, 7000, { headers }); if (!r.ok) continue; const j = await r.json(); if (j?.chart?.result) return j; } catch (_) {}
   }
-  throw new Error('Yahoo sin datos');
-}
-
-/* ── Fuente 3: Stooq CSV ── */
-const STOOQ_MAP = {
-  'btc-usd':'btcusd','eth-usd':'ethusd','sol-usd':'solusd','xrp-usd':'xrpusd',
-  '^gspc':'^spx','^ndx':'^ndx','^dji':'^dji','^ftse':'^ftm',
-  'spy':'spy.us','qqq':'qqq.us','gld':'gld.us','slv':'slv.us','dia':'dia.us',
-  'xom':'xom.us','lly':'lly.us','jpm':'jpm.us','v':'v.us','ma':'ma.us',
-  'aapl':'aapl.us','msft':'msft.us','nvda':'nvda.us','googl':'googl.us',
-  'meta':'meta.us','amzn':'amzn.us','tsla':'tsla.us','nflx':'nflx.us',
-  'uber':'uber.us','pypl':'pypl.us','baba':'baba.us','dis':'dis.us','ko':'ko.us'
-};
-function stooqSym(s) {
-  const k = s.toLowerCase();
-  return STOOQ_MAP[k] || (/^[a-z0-9]+$/.test(k) ? k + '.us' : null);
-}
-async function fromStooq(symbol) {
-  const ss = stooqSym(symbol);
-  if (!ss) throw new Error('no-stooq');
-  const now = Date.now();
-  const d1 = new Date(now - 130 * 86400 * 1000).toISOString().slice(0,10).replace(/-/g,'');
-  const d2 = new Date(now).toISOString().slice(0,10).replace(/-/g,'');
-  const url = 'https://stooq.com/q/d/l/?s=' + encodeURIComponent(ss) + '&d1=' + d1 + '&d2=' + d2 + '&i=d';
-  const r = await fetchT(url, 8000, { headers: { 'User-Agent': UA, 'Accept': 'text/csv,*/*', 'Referer': 'https://stooq.com/' } });
-  if (!r.ok) throw new Error('Stooq ' + r.status);
-  const csv = await r.text();
-  const lines = csv.trim().split('\n');
-  if (lines.length < 35 || !lines[0].toLowerCase().includes('date')) throw new Error('Stooq vacío');
-  const ts=[], close=[], high=[], low=[], volume=[];
-  for (let i = 1; i < lines.length; i++) {
-    const p = lines[i].split(',');
-    const h=parseFloat(p[2]), l=parseFloat(p[3]), c=parseFloat(p[4]), v=parseFloat(p[5]);
-    const t = Date.parse(p[0] + 'T16:00:00Z') / 1000;
-    if (isFinite(t) && isFinite(c)) { ts.push(t); close.push(c); high.push(isFinite(h)?h:c); low.push(isFinite(l)?l:c); volume.push(isFinite(v)?v:0); }
-  }
-  if (close.length < 35) throw new Error('Stooq corto');
-  return { chart: { result: [{ meta:{ regularMarketPrice:close[close.length-1], chartPreviousClose:close[close.length-2], currency:'USD', shortName:symbol }, timestamp:ts, indicators:{ quote:[{close,high,low,volume}] } }], error:null } };
-}
-
-/* ── Una sola función que prueba las 3 fuentes ── */
-async function fetchOne(symbol, cd) {
-  try { return await fromYahoo(symbol, cd); }
-  catch (e1) {
-    try { return await fromStooq(symbol); }
-    catch (e2) {
-      const m1 = e1.is429 ? 'Yahoo 429' : e1.message;
-      throw new Error(m1 + ' · ' + e2.message);
-    }
-  }
+  throw new Error('Y-fail');
 }
 
 module.exports = async function(req, res) {
@@ -131,24 +107,33 @@ module.exports = async function(req, res) {
 
   const t0 = Date.now();
   const results = {}, errors = {};
-  const cd = await getCrumb();
+  let tdNote = '';
 
-  // Procesar en mini-lotes de 3 en paralelo: equilibrio entre velocidad
-  // (caber en el límite de 10s de Vercel Hobby) y no saturar Yahoo.
-  const CHUNK = 3;
-  for (let i = 0; i < symbols.length; i += CHUNK) {
-    const chunk = symbols.slice(i, i + CHUNK);
-    const settled = await Promise.allSettled(chunk.map(s => fetchOne(s, cd)));
-    settled.forEach((r, j) => {
-      const sym = chunk[j];
-      if (r.status === 'fulfilled') results[sym] = r.value;
-      else errors[sym] = r.reason?.message || 'Error';
-    });
-    if (i + CHUNK < symbols.length) await sleep(120);
+  // ── Twelve Data: lotes de 8 símbolos por llamada (plan gratuito) ──
+  // Con el universo de 8, normalmente es UNA sola llamada → instantáneo.
+  const TD_BATCH = 8;
+  for (let i = 0; i < symbols.length; i += TD_BATCH) {
+    const chunk = symbols.slice(i, i + TD_BATCH);
+    try {
+      const { out } = await fetchTwelveBatch(chunk);
+      Object.assign(results, out);
+    } catch (e) { tdNote = e.message; }
+    if (i + TD_BATCH < symbols.length) await sleep(7500); // respetar 8 req/min si hay >8
   }
 
-  console.log(JSON.stringify({ msg:'batch', n:symbols.length, ok:Object.keys(results).length, err:Object.keys(errors).length, ms:Date.now()-t0 }));
-  res.setHeader('Cache-Control', 's-maxage=55, stale-while-revalidate=120');
-  res.status(200).json({ results, errors, ms: Date.now() - t0 });
-};
+  // ── Yahoo como respaldo para lo que falte ──
+  const missing = symbols.filter(s => !results[s]);
+  if (missing.length) {
+    const cd = await getCrumb();
+    const settled = await Promise.allSettled(missing.map(s => fromYahoo(s, cd)));
+    settled.forEach((r, j) => {
+      const sym = missing[j];
+      if (r.status === 'fulfilled') results[sym] = r.value;
+      else errors[sym] = 'Sin datos en ninguna fuente';
+    });
+  }
 
+  console.log(JSON.stringify({ msg:'batch', n:symbols.length, ok:Object.keys(results).length, td:tdNote, ms:Date.now()-t0 }));
+  res.setHeader('Cache-Control', 's-maxage=55, stale-while-revalidate=120');
+  res.status(200).json({ results, errors, ms: Date.now() - t0, _diag: { okCount: Object.keys(results).length, total: symbols.length, tdNote } });
+};
