@@ -1,14 +1,4 @@
-/**
- * SobriTrading · /api/batch.js
- *
- * UN SOLO endpoint que recibe todos los símbolos a la vez,
- * obtiene el crumb de Yahoo UNA VEZ, y los descarga en secuencia
- * con pequeño delay. Así Vercel no dispara 15 peticiones
- * paralelas que Yahoo bloqueaba con 429.
- *
- * GET /api/batch?symbols=AAPL,MSFT,NVDA,...
- * → { results: { AAPL: {...chartData}, ... }, errors: { NVDA: "msg" } }
- */
+
 
 const SYMBOL_RE = /^[A-Za-z0-9.\-^=]{1,12}$/;
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
