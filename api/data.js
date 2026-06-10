@@ -1,10 +1,4 @@
-/**
- * SobriTrading · api/data.js  v5
- * - Rango 3mo (suficiente para las 8 estrategias, menos bloqueos)
- * - Yahoo Finance con crumb + cookies cacheados en módulo
- * - Stooq con mapeo explícito de símbolos
- * - 429 explícito → frontend usa proxies del navegador
- */
+
 
 const SYMBOL_RE = /^[A-Za-z0-9.\-^=]{1,12}$/;
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
