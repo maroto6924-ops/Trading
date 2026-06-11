@@ -17,7 +17,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /* ── Caché en memoria del servidor (persiste en instancias calientes) ── */
 const CACHE = new Map();           // symbol → { chart, at }
-const CACHE_TTL = 20 * 60 * 1000;  // 20 minutos (datos diarios cambian poco)
+const CACHE_TTL = 4 * 60 * 1000;   // 4 min (intradía: datos de 5min se refrescan rápido)
 
 /* ── Control de tasa: registro de timestamps de llamadas a Twelve Data ── */
 let _tdCalls = [];                  // timestamps de las últimas llamadas
@@ -53,9 +53,12 @@ function tdToChart(values, meta, symbol) {
   return { chart:{ result:[{ meta:{ regularMarketPrice:close[close.length-1], chartPreviousClose:close[close.length-2], currency:(meta&&meta.currency)||'USD', shortName:symbol }, timestamp:ts, indicators:{ quote:[{close,high,low,volume}] } }], error:null } };
 }
 
-async function fromTwelveData(symbol) {
+async function fromTwelveData(symbol, interval) {
+  const iv = interval || '5min';
+  // Intradía: 5min → 100 barras (~1.3 sesiones). Diario: 90 barras.
+  const outputsize = iv === '1day' ? 90 : 100;
   const url = 'https://api.twelvedata.com/time_series?symbol=' + encodeURIComponent(tdSymbol(symbol)) +
-              '&interval=1day&outputsize=90&apikey=' + TWELVE_DATA_KEY;
+              '&interval=' + iv + '&outputsize=' + outputsize + '&apikey=' + TWELVE_DATA_KEY;
   recordTD();
   const r = await fetchT(url, 9000, { headers: { 'User-Agent': UA } });
   const txt = await r.text();
@@ -85,8 +88,10 @@ async function getCrumb(){
   }
   return null;
 }
-async function fromYahoo(symbol,cd){
-  const qs='?interval=1d&range=3mo'+(cd?('&crumb='+encodeURIComponent(cd.crumb)):'');
+async function fromYahoo(symbol,cd,interval){
+  const iv = (interval==='5min')?'5m':(interval==='15min')?'15m':'1d';
+  const range = (iv==='1d')?'3mo':'5d';
+  const qs='?interval='+iv+'&range='+range+(cd?('&crumb='+encodeURIComponent(cd.crumb)):'');
   const path='/v8/finance/chart/'+encodeURIComponent(symbol)+qs;
   const headers=Object.assign({'User-Agent':UA,'Accept':'application/json,*/*','Referer':'https://finance.yahoo.com/'},cd?{'Cookie':cd.cookie}:{});
   for(const host of['https://query1.finance.yahoo.com','https://query2.finance.yahoo.com']){
@@ -96,28 +101,29 @@ async function fromYahoo(symbol,cd){
 }
 
 /* Obtener un símbolo: caché → Twelve Data (si hay cuota) → Yahoo */
-async function getSymbol(symbol, cd) {
-  // 1. Caché fresca
-  const cached = CACHE.get(symbol);
+async function getSymbol(symbol, cd, interval) {
+  // Caché por símbolo+intervalo (intradía y diario son distintos)
+  const ckey = symbol + ':' + (interval || '5min');
+  const cached = CACHE.get(ckey);
   if (cached && (Date.now() - cached.at) < CACHE_TTL) return { chart: cached.chart, src: 'cache' };
 
-  // 2. Twelve Data si queda cuota este minuto
+  // Twelve Data si queda cuota este minuto
   if (canCallTD()) {
     try {
-      const chart = await fromTwelveData(symbol);
-      CACHE.set(symbol, { chart, at: Date.now() });
+      const chart = await fromTwelveData(symbol, interval);
+      CACHE.set(ckey, { chart, at: Date.now() });
       return { chart, src: 'td' };
     } catch (e) { /* sigue a Yahoo */ }
   }
 
-  // 3. Yahoo
+  // Yahoo (solo soporta intradía limitado; usar como respaldo de diario)
   try {
-    const chart = await fromYahoo(symbol, cd);
-    CACHE.set(symbol, { chart, at: Date.now() });
+    const chart = await fromYahoo(symbol, cd, interval);
+    CACHE.set(ckey, { chart, at: Date.now() });
     return { chart, src: 'yahoo' };
   } catch (e) { /* nada */ }
 
-  // 4. Caché vieja como último recurso (mejor datos viejos que ninguno)
+  // Caché vieja como último recurso
   if (cached) return { chart: cached.chart, src: 'cache-old' };
 
   throw new Error('Sin datos');
@@ -127,6 +133,8 @@ module.exports = async function(req, res) {
   const raw = String((req.query && req.query.symbols) || '');
   const symbols = raw.split(',').map(s => s.trim()).filter(s => SYMBOL_RE.test(s)).slice(0, 32);
   if (!symbols.length) return res.status(400).json({ error: 'Sin símbolos válidos' });
+  // Intervalo: 5min (intradía, por defecto) o 1day. Validar.
+  const interval = ['5min','15min','1day'].includes(String(req.query.interval)) ? String(req.query.interval) : '5min';
 
   const t0 = Date.now();
   const TIME_BUDGET = 8000; // 8s máx (Vercel Hobby corta a 10s)
@@ -136,7 +144,8 @@ module.exports = async function(req, res) {
   // PASO 1: servir TODO lo que ya está en caché al instante (no gasta tiempo de red)
   const needFetch = [];
   for (const sym of symbols) {
-    const cached = CACHE.get(sym);
+    const ckey = sym + ':' + interval;
+    const cached = CACHE.get(ckey);
     if (cached && (Date.now() - cached.at) < CACHE_TTL) {
       results[sym] = cached.chart; srcCount.cache++;
     } else {
@@ -152,7 +161,7 @@ module.exports = async function(req, res) {
     for (let i = 0; i < needFetch.length; i += CHUNK) {
       if (Date.now() - t0 > TIME_BUDGET) { pending = needFetch.slice(i); break; }
       const chunk = needFetch.slice(i, i + CHUNK);
-      const settled = await Promise.allSettled(chunk.map(s => getSymbol(s, cd)));
+      const settled = await Promise.allSettled(chunk.map(s => getSymbol(s, cd, interval)));
       settled.forEach((r, j) => {
         const sym = chunk[j];
         if (r.status === 'fulfilled') { results[sym] = r.value.chart; srcCount[r.value.src]++; }
@@ -164,7 +173,7 @@ module.exports = async function(req, res) {
   // Los pendientes (sin tiempo) no son error: se cargarán en la siguiente llamada
   pending.forEach(s => { if (!errors[s]) errors[s] = 'pendiente'; });
 
-  const diag = { version: 'v8-budget', okCount: Object.keys(results).length, total: symbols.length, pending: pending.length, sources: srcCount, ms: Date.now() - t0 };
+  const diag = { version: 'v9-intraday', interval, okCount: Object.keys(results).length, total: symbols.length, pending: pending.length, sources: srcCount, ms: Date.now() - t0 };
   console.log(JSON.stringify({ msg: 'batch', ...diag }));
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).json({ results, errors, _diag: diag });
